@@ -16,13 +16,14 @@ function Broadcaster() {
 }
 
 function Parser() {
-    const operations = '+-*/^'.split('');
+    const operations = '+-*/^√'.split('');
     const inverseOperation = {
         '+': '-',
         '-': '+',
         '*': '/',
         '/': '*',
-        '^': undefined
+        '^': '√',
+        '√': '^'
     }
 
     const numbers = ['0', '1', '2', '3', '4', '5', '6', '7', '9', '-', '.'];
@@ -40,17 +41,20 @@ function Parser() {
         '.': undefined
     }
 
+    const openGroup = '([{';
+    const closeGroup = ')]}';
+
     function readingState(char) {
         if (!char) return undefined
         else if (char === ' ') return 'space'
         else if (numbers.includes(char)) return 'number'
         else if (operations.includes(char)) return 'operation'
-        // else if (openGroup.includes(char)) 'openGroup'
-        // else if (closeGroup.includes(char)) 'closeGroup'
+        else if (openGroup.includes(char)) return 'openGroup'
+        else if (closeGroup.includes(char)) return 'closeGroup'
         else return 'letter'
     }
 
-    function tokenCharGroups(charArray) {
+    function groupChars(charArray) {
         const returnVal = [];
         let tokenStart = 0;
         let lastReadingState = readingState(charArray[0]);
@@ -60,18 +64,23 @@ function Parser() {
                 returnVal.push({ readingState: lastReadingState, chars: charArray.slice(tokenStart, i) });
                 tokenStart = i;
             }
+            if (lastReadingState === 'openGroup' && currentReadingState !== 'closeGroup') continue; 
             lastReadingState = currentReadingState;
         }
         return returnVal;
     }
 
     function readTokens(expressionInput) {
-        const charGroups = tokenCharGroups(expressionInput);
+        const charGroups = groupChars(expressionInput);
         const tokens = [];
         for (const charGroup of charGroups) {
             switch (charGroup.readingState) {
                 case 'space': continue;
-                case 'number': tokens.push({ tokenType: 'Number', value: parseInt(charGroup.chars) });
+                case 'number': {
+                    console.log(charGroup.chars.join(''));
+                    tokens.push({ tokenType: 'Number', value: parseInt(charGroup.chars.join('')) });
+                    continue;
+                };
                 case 'operation': {
                     if (charGroup.chars.length >= 2) {
                         throw {
@@ -81,36 +90,26 @@ function Parser() {
                     }
                     tokens.push({
                         tokenType: 'Operation',
-                        operation: charGroup.chars,
+                        operation: charGroup.chars[0],
                         leftOperand: null,
                         rightOperand: null
-                    })
+                    });
+                    continue;
                 };
                 case 'letter': {
+                    // if (tokens[tokens.length - 1] && tokens[tokens.length - 1].tokenType === 'Number') {
+                    //     tokens.push({ tokenType: 'Term', coefficient: tokens.pop().value });
+                    // }
                     for (const letter of charGroup.chars) {   
                         tokens.push({ tokenType: 'Variable', value: letter})
                     }
+                    continue;
                 };
+                case 'closeGroup': {
+                    tokens.push({ tokenType: 'Expression', tokenlist: readTokens(charGroup.chars) });
+                    continue;
+                }
             }
-        }
-        return tokens;
-    }
-
-    /*
-    function buildTerms(tokens) {
-        const tokens = [];
-        for (let i = 0; i < tokens.length; i++) {
-            const tokenType = tokens[i].tokenType;
-            if (tokenType === 'Number') {
-                tokens.push({ tokenType: 'Term',  });
-            }
-        }
-    }
-    */
-    function buildTree(tokens) {
-        const tree = null;
-        // buildTerms(tokens);
-        for (let i = 0; i < tokens.length; i++) {
         }
         return tokens;
     }
@@ -131,19 +130,19 @@ function Parser() {
         }
         return {
             tokenType: 'AlgebraicEquation',
-            left: buildTree(readTokens(leftHalf.split(''))),
-            right: buildTree(readTokens(rightHalf.split('')))
+            left: { tokenType: 'Expression', tokenlist: readTokens(leftHalf.split('')) },
+            right: { tokenType: 'Expression', tokenlist: readTokens(rightHalf.split('')) }
         }
     }
 }
 
 function Solver() {
-    function simplify(parsedExpression) {
-        switch (parsedExpression.tokenType) {
+    function simplify(parsed) {
+        switch (parsed.tokenType) {
             case 'Operation': {
-                const leftOperand = simplify(parsedExpression.leftOperand);
-                const rightOperand = simplify(parsedExpression.rightOperand);
-                switch (parsedExpression[0].operation) {
+                const leftOperand = simplify(parsed.leftOperand);
+                const rightOperand = simplify(parsed.rightOperand);
+                switch (parsed[0].operation) {
                     case '+': ;
                     case '-': ;
                     case '*': ;
@@ -151,8 +150,8 @@ function Solver() {
                 }
             }
             case 'AlgebraicEquation': return {
-                left: simplify(parsedAlgebraicEquation.left),
-                right: simplify(parsedAlgebraicEquation.right)
+                left: simplify(parsed.left),
+                right: simplify(parsed.right)
             };
         }
     }
@@ -163,7 +162,6 @@ function Solver() {
 
     this.solve = function (parsedAlgebraicEquation, solveFor) {
         return simplify(parsedAlgebraicEquation)
-        // return move(simplify(parsedAlgebraicEquation), 'x');
     }
 }
 
@@ -177,24 +175,65 @@ output.subscribe((type, message) => {
 
 const parser = new Parser(output);
 const solver = new Solver(output);
+
+function fancyDisplay(parsed) {
+    const spacing = '  ';
+    let display = '';
+    let indentLevel = 0;
+    let suppressIndentChange = false;
+    let suppressSpecial = false;
+    const json = JSON.stringify(parsed).split('');
+    for (let i = 0; i < json.length; i++) {
+        const char = json[i];
+        if (char === '"') {
+            suppressSpecial = !suppressSpecial;
+            display += '"';
+        } else if (!suppressSpecial) {
+            if (char === '[') {
+                indentLevel++;
+                suppressIndentChange = true;
+                display += '[\n'+ spacing.repeat(indentLevel);
+            } else if (char === ']') {
+                indentLevel--;
+                suppressIndentChange = false;
+                display += '\n' + spacing.repeat(indentLevel) + ']';
+            } else if (char === ':') {
+                display += ': ';
+            } else if (suppressIndentChange) {
+                switch (char) {
+                    case '{': display += '{ '; break;
+                    case '}': display += ' }'; break;
+                    case ',': display += ', '; break;
+                    default: display += char; break;
+                }
+            } else if (!suppressIndentChange) {
+                switch (char) {
+                    case '{': indentLevel++; display += '{\n' + spacing.repeat(indentLevel); break;
+                    case '}': indentLevel--; display += '\n' + spacing.repeat(indentLevel) + '}'; break;
+                    case ',': display += ',\n' + spacing.repeat(indentLevel); break;
+                    default: display += char; break;
+                } 
+            }
+        } else display += char;
+    }
+    return display;
+}
+
 function onEquationInput(event) {
     outputElement.textContent = '';
-    
-    const value = event.target.value;
-    let parsed;
-    let solved;
     try {
-        parsed = parser.parse(value); 
-        output.broadcast('Debug Parsed: ', JSON.stringify(parsed));
+        const value = event.target.value;
+        const parsed = parser.parse(value); 
+        output.broadcast('Debug Parsed: ', fancyDisplay(parsed));
+
+        try {
+            const solved = solver.solve(parsed);
+            output.broadcast('Debug Solved: ', fancyDisplay(solved));
+        } catch (solveError) {
+            output.broadcast('Solve Error: ' + solveError.message + ': ', solveError.sample)
+        }
     } catch (parseError) {
         output.broadcast('Parse Error: ' + parseError.message + ': ', parseError.sample)
-    }
-
-    try {
-        solved = solver.solve(parsed);
-        output.broadcast('Debug Solved: ', JSON.stringify(solved));
-    } catch (solveError) {
-        output.broadcast('Solve Error: ' + solveError.message + ': ', solveError.sample)
     }
 }
 
